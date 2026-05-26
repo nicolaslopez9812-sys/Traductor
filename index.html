@@ -49,11 +49,21 @@
     }
 
     h1 {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
       margin: 0;
       max-width: 860px;
       font-size: clamp(2rem, 5vw, 4.2rem);
       line-height: 0.98;
       letter-spacing: 0;
+    }
+
+    .brand-icon {
+      display: inline-flex;
+      align-items: center;
+      line-height: 1;
     }
 
     .lead {
@@ -377,7 +387,7 @@
 <body>
   <main>
     <header>
-      <h1>Clona tu voz con XTTS v2 para practicar ingles</h1>
+      <h1><span class="brand-icon" aria-hidden="true">🐦‍🔥</span><span>Clona tu voz en Ingles JN</span></h1>
       <p class="lead">
         Sube o graba una muestra corta de tu voz, escribe una frase en ingles y genera audio con un Space Gradio basado en Coqui XTTS v2.
       </p>
