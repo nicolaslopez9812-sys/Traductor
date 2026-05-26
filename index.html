@@ -64,6 +64,23 @@
       line-height: 1.65;
     }
 
+    .hero-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(17, 23, 34, 0.72);
+      color: var(--muted);
+      padding: 7px 10px;
+      font-size: 0.82rem;
+      font-weight: 750;
+    }
+
     .app {
       display: grid;
       grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
@@ -208,6 +225,47 @@
       cursor: pointer;
     }
 
+    .text-tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+
+    .sample-row,
+    .output-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .sample,
+    .link-button {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 8px 10px;
+      font-size: 0.84rem;
+      font-weight: 750;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .sample:hover,
+    .link-button:hover {
+      border-color: rgba(67, 224, 166, 0.6);
+    }
+
+    .voice-preset {
+      display: grid;
+      gap: 8px;
+    }
+
     audio {
       width: 100%;
     }
@@ -337,6 +395,11 @@
       <p class="lead">
         Sube o graba una muestra corta de tu voz, escribe una frase en ingles y genera audio con un Space Gradio basado en Coqui XTTS v2.
       </p>
+      <div class="hero-stats" aria-label="Ajustes principales">
+        <span class="stat">WAV mono 24 kHz</span>
+        <span class="stat">Ingles optimizado</span>
+        <span class="stat">Pitch preservado</span>
+      </div>
     </header>
 
     <section class="app" aria-label="Clonacion de voz con XTTS v2">
@@ -400,6 +463,14 @@
           <textarea id="englishText" spellcheck="true">Today I am practicing my English pronunciation with a cloned version of my own voice.</textarea>
         </label>
 
+        <div class="text-tools">
+          <span id="textStats">0 caracteres</span>
+          <div class="sample-row">
+            <button class="sample" type="button">Could you repeat that more slowly, please?</button>
+            <button class="sample" type="button">I am focusing on clear vowels and natural rhythm.</button>
+          </div>
+        </div>
+
         <div class="speed-control">
           <div class="speed-head">
             <span>Velocidad de reproducción</span>
@@ -407,6 +478,16 @@
           </div>
           <input id="playbackSpeed" type="range" min="0.5" max="1.5" step="0.1" value="1.0" />
         </div>
+
+        <label class="voice-preset">
+          Estilo de generación XTTS
+          <select id="qualityPreset">
+            <option value="natural">Natural claro</option>
+            <option value="expressive">Más expresivo</option>
+            <option value="faithful">Máxima fidelidad al timbre</option>
+            <option value="stable">Muy estable</option>
+          </select>
+        </label>
 
         <button class="button" id="generateBtn" type="button">Clonar Voz y Generar Audio</button>
 
@@ -416,6 +497,9 @@
         </div>
 
         <audio id="resultAudio" class="result-player" controls preload="auto"></audio>
+        <div class="output-actions">
+          <a id="downloadAudio" class="link-button" href="#" download="voz-clonada-xtts.wav" hidden>Descargar WAV</a>
+        </div>
       </div>
     </section>
   </main>
@@ -434,12 +518,15 @@
       apiMode: document.querySelector("#apiMode"),
       hfToken: document.querySelector("#hfToken"),
       englishText: document.querySelector("#englishText"),
+      textStats: document.querySelector("#textStats"),
       playbackSpeed: document.querySelector("#playbackSpeed"),
       playbackSpeedValue: document.querySelector("#playbackSpeedValue"),
+      qualityPreset: document.querySelector("#qualityPreset"),
       generateBtn: document.querySelector("#generateBtn"),
       status: document.querySelector("#status"),
       statusText: document.querySelector("#statusText"),
-      resultAudio: document.querySelector("#resultAudio")
+      resultAudio: document.querySelector("#resultAudio"),
+      downloadAudio: document.querySelector("#downloadAudio")
     };
 
     let selectedAudioBlob = null;
@@ -465,6 +552,44 @@
       referenceAudioWeight: 1.0,
       sentenceSplit: true
     };
+
+    const XTTS_PRESETS = {
+      natural: {
+        temperature: 0.70,
+        topP: 0.85,
+        repetitionPenalty: 5.0,
+        pauseMs: 250,
+        vadSilenceDb: -45
+      },
+      expressive: {
+        temperature: 0.74,
+        topP: 0.90,
+        repetitionPenalty: 4.8,
+        pauseMs: 220,
+        vadSilenceDb: -48
+      },
+      faithful: {
+        temperature: 0.68,
+        topP: 0.82,
+        repetitionPenalty: 5.2,
+        pauseMs: 270,
+        vadSilenceDb: -44
+      },
+      stable: {
+        temperature: 0.66,
+        topP: 0.78,
+        repetitionPenalty: 5.4,
+        pauseMs: 300,
+        vadSilenceDb: -42
+      }
+    };
+
+    function getQualitySettings() {
+      return {
+        ...XTTS_QUALITY,
+        ...(XTTS_PRESETS[els.qualityPreset.value] || XTTS_PRESETS.natural)
+      };
+    }
 
     function setStatus(message, type = "idle") {
       els.status.className = `status ${type}`;
@@ -567,6 +692,30 @@
       return new Blob([buffer], { type: "audio/wav" });
     }
 
+    function trimSilence(audioBuffer, threshold = 0.012, paddingSeconds = 0.08) {
+      const samples = audioBuffer.getChannelData(0);
+      const padding = Math.floor(audioBuffer.sampleRate * paddingSeconds);
+      let start = 0;
+      let end = samples.length - 1;
+
+      while (start < samples.length && Math.abs(samples[start]) < threshold) {
+        start += 1;
+      }
+
+      while (end > start && Math.abs(samples[end]) < threshold) {
+        end -= 1;
+      }
+
+      start = Math.max(0, start - padding);
+      end = Math.min(samples.length - 1, end + padding);
+
+      const frameCount = Math.max(1, end - start + 1);
+      const context = new OfflineAudioContext(1, frameCount, audioBuffer.sampleRate);
+      const trimmed = context.createBuffer(1, frameCount, audioBuffer.sampleRate);
+      trimmed.copyToChannel(samples.slice(start, end + 1), 0);
+      return trimmed;
+    }
+
     function resampleAudioBuffer(audioBuffer, targetSampleRate, targetChannels = audioBuffer.numberOfChannels) {
       if (audioBuffer.sampleRate === targetSampleRate && audioBuffer.numberOfChannels === targetChannels) {
         return audioBuffer;
@@ -608,24 +757,33 @@
       try {
         setStatus("Limpiando y normalizando la voz de referencia a WAV 24 kHz...", "loading");
         const decoded = await decodeAudio(blob);
-        const mono24k = await resampleAudioBuffer(decoded, XTTS_QUALITY.inputSampleRate, 1);
-        const samples = mono24k.getChannelData(0);
+        const quality = getQualitySettings();
+        const mono24k = await resampleAudioBuffer(decoded, quality.inputSampleRate, 1);
+        const trimmed = trimSilence(mono24k);
+        const samples = trimmed.getChannelData(0);
         let peak = 0;
+        let rms = 0;
 
         for (let i = 0; i < samples.length; i += 1) {
-          const cleaned = Math.abs(samples[i]) < 0.001 ? 0 : samples[i];
+          const cleaned = Math.abs(samples[i]) < 0.0008 ? 0 : samples[i];
           samples[i] = cleaned;
           peak = Math.max(peak, Math.abs(cleaned));
+          rms += cleaned * cleaned;
         }
 
+        rms = Math.sqrt(rms / samples.length);
+
         if (peak > 0) {
-          const gain = Math.min(0.92 / peak, 2.8);
+          const targetRms = 0.075;
+          const rmsGain = rms > 0 ? targetRms / rms : 1;
+          const peakGain = 0.92 / peak;
+          const gain = Math.min(rmsGain, peakGain, 3.0);
           for (let i = 0; i < samples.length; i += 1) {
             samples[i] *= gain;
           }
         }
 
-        return { blob: audioBufferToWav(mono24k), name: "referencia-xtts-24khz.wav" };
+        return { blob: audioBufferToWav(trimmed), name: "referencia-xtts-24khz.wav" };
       } catch (error) {
         console.warn("No se pudo normalizar la referencia, se usara el archivo original.", error);
         const ext = getFileExtension(blob, "referencia.wav");
@@ -667,6 +825,7 @@
     }
 
     function buildPayload(mode, audioRefOrUrl, text) {
+      const quality = getQualitySettings();
       const outputLanguage = "en";
       const xttsStudioLanguage = "English";
 
@@ -675,9 +834,9 @@
           text,
           audioRefOrUrl,
           outputLanguage,
-          XTTS_QUALITY.temperature,
-          XTTS_QUALITY.lengthPenalty,
-          XTTS_QUALITY.speedRatio
+          quality.temperature,
+          quality.lengthPenalty,
+          quality.speedRatio
         ];
       }
 
@@ -689,8 +848,8 @@
           null,
           false,
           true,
-          XTTS_QUALITY.temperature,
-          XTTS_QUALITY.lengthPenalty
+          quality.temperature,
+          quality.lengthPenalty
         ];
       }
 
@@ -699,20 +858,20 @@
         audioRefOrUrl,              // URL temporal del audio de referencia subido a Gradio.
         null,                       // Entrada de microfono del Space; usamos archivo, por eso va null.
         xttsStudioLanguage,         // Este Space espera la etiqueta "English"; otros endpoints usan "en".
-        XTTS_QUALITY.temperature,   // 0.65-0.75 suele sonar mas natural sin inventar palabras.
-        XTTS_QUALITY.lengthPenalty, // 1.0 evita alargar o comprimir el render inicial del modelo.
+        quality.temperature,        // 0.65-0.75 suele sonar mas natural sin inventar palabras.
+        quality.lengthPenalty,      // 1.0 evita alargar o comprimir el render inicial del modelo.
         true,                       // Limpieza/normalizacion interna de voz cuando el Space la expone.
-        XTTS_QUALITY.repetitionPenalty,
-        XTTS_QUALITY.speedRatio,    // 1.0: el modelo renderiza limpio; el slider ajusta despues.
+        quality.repetitionPenalty,
+        quality.speedRatio,         // 1.0: el modelo renderiza limpio; el slider ajusta despues.
         30,                         // Max text tokens per sentence; ayuda a claridad en frases largas.
-        XTTS_QUALITY.topK,
-        XTTS_QUALITY.topP,
-        XTTS_QUALITY.sentenceSplit,
-        -45,                        // Umbral de silencio VAD: reduce cola y ruido de baja energia.
+        quality.topK,
+        quality.topP,
+        quality.sentenceSplit,
+        quality.vadSilenceDb,       // Umbral de silencio VAD: reduce cola y ruido de baja energia.
         300,                        // Duracion minima de silencio para segmentar.
         100,                        // Padding de silencio para evitar cortes duros.
         "Native XTTS splitting",
-        250,                        // Pausa entre segmentos para articulacion clara.
+        quality.pauseMs,            // Pausa entre segmentos para articulacion clara.
         true                        // Mantener normalizacion final activada en el Space.
       ];
     }
@@ -729,6 +888,11 @@
       els.resultAudio.webkitPreservesPitch = true;
       els.resultAudio.playbackRate = speed;
       els.resultAudio.defaultPlaybackRate = speed;
+    }
+
+    function updateTextStats() {
+      const count = els.englishText.value.trim().length;
+      els.textStats.textContent = `${count} caracteres`;
     }
 
     function prepareHighFidelityPlayback() {
@@ -835,6 +999,8 @@
         cleanObjectUrl(resultObjectUrl);
         resultObjectUrl = URL.createObjectURL(playbackBlob);
         els.resultAudio.src = resultObjectUrl;
+        els.downloadAudio.href = resultObjectUrl;
+        els.downloadAudio.hidden = false;
         prepareHighFidelityPlayback();
         els.resultAudio.load();
         els.resultAudio.style.display = "block";
@@ -922,9 +1088,29 @@
       }
     });
 
+    document.querySelectorAll(".sample").forEach((button) => {
+      button.addEventListener("click", () => {
+        els.englishText.value = button.textContent.trim();
+        updateTextStats();
+        els.englishText.focus();
+      });
+    });
+
+    els.englishText.addEventListener("input", updateTextStats);
+    els.qualityPreset.addEventListener("change", () => {
+      const labels = {
+        natural: "Preset natural claro: equilibrio entre timbre, claridad y expresion.",
+        expressive: "Preset mas expresivo: mas entonacion, ideal para frases conversacionales.",
+        faithful: "Preset maxima fidelidad: prioriza parecido de timbre y estabilidad.",
+        stable: "Preset muy estable: reduce inventos y artefactos en textos dificiles."
+      };
+      setStatus(labels[els.qualityPreset.value] || labels.natural, "ok");
+    });
+
     els.playbackSpeed.addEventListener("input", updatePlaybackSpeed);
     els.resultAudio.addEventListener("play", updatePlaybackSpeed);
     updatePlaybackSpeed();
+    updateTextStats();
 
     els.generateBtn.addEventListener("click", generateVoiceClone);
   </script>
