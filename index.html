@@ -225,25 +225,12 @@
       cursor: pointer;
     }
 
-    .text-tools {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-      justify-content: space-between;
-      color: var(--muted);
-      font-size: 0.84rem;
-      line-height: 1.45;
-    }
-
-    .sample-row,
     .output-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
     }
 
-    .sample,
     .link-button {
       border: 1px solid var(--line);
       border-radius: var(--radius);
@@ -256,7 +243,6 @@
       text-decoration: none;
     }
 
-    .sample:hover,
     .link-button:hover {
       border-color: rgba(67, 224, 166, 0.6);
     }
@@ -391,7 +377,7 @@
 <body>
   <main>
     <header>
-      <h1>Clona tu voz JN</h1>
+      <h1>Clona tu voz con XTTS v2 para practicar ingles</h1>
       <p class="lead">
         Sube o graba una muestra corta de tu voz, escribe una frase en ingles y genera audio con un Space Gradio basado en Coqui XTTS v2.
       </p>
@@ -463,14 +449,6 @@
           <textarea id="englishText" spellcheck="true">Today I am practicing my English pronunciation with a cloned version of my own voice.</textarea>
         </label>
 
-        <div class="text-tools">
-          <span id="textStats">0 caracteres</span>
-          <div class="sample-row">
-            <button class="sample" type="button">Could you repeat that more slowly, please?</button>
-            <button class="sample" type="button">I am focusing on clear vowels and natural rhythm.</button>
-          </div>
-        </div>
-
         <div class="speed-control">
           <div class="speed-head">
             <span>Velocidad de reproducción</span>
@@ -518,7 +496,6 @@
       apiMode: document.querySelector("#apiMode"),
       hfToken: document.querySelector("#hfToken"),
       englishText: document.querySelector("#englishText"),
-      textStats: document.querySelector("#textStats"),
       playbackSpeed: document.querySelector("#playbackSpeed"),
       playbackSpeedValue: document.querySelector("#playbackSpeedValue"),
       qualityPreset: document.querySelector("#qualityPreset"),
@@ -571,14 +548,14 @@
       faithful: {
         temperature: 0.68,
         topP: 0.82,
-        repetitionPenalty: 5.2,
+        repetitionPenalty: 5.0,
         pauseMs: 270,
         vadSilenceDb: -44
       },
       stable: {
         temperature: 0.66,
         topP: 0.78,
-        repetitionPenalty: 5.4,
+        repetitionPenalty: 5.0,
         pauseMs: 300,
         vadSilenceDb: -42
       }
@@ -890,11 +867,6 @@
       els.resultAudio.defaultPlaybackRate = speed;
     }
 
-    function updateTextStats() {
-      const count = els.englishText.value.trim().length;
-      els.textStats.textContent = `${count} caracteres`;
-    }
-
     function prepareHighFidelityPlayback() {
       els.resultAudio.preload = "auto";
       els.resultAudio.preservesPitch = true;
@@ -968,6 +940,7 @@
 
       try {
         setBusy(true);
+        els.downloadAudio.hidden = true;
         setStatus("Preparando audio de referencia...", "loading");
 
         const prepared = await prepareReferenceAudioForXtts(selectedAudioBlob);
@@ -1088,15 +1061,6 @@
       }
     });
 
-    document.querySelectorAll(".sample").forEach((button) => {
-      button.addEventListener("click", () => {
-        els.englishText.value = button.textContent.trim();
-        updateTextStats();
-        els.englishText.focus();
-      });
-    });
-
-    els.englishText.addEventListener("input", updateTextStats);
     els.qualityPreset.addEventListener("change", () => {
       const labels = {
         natural: "Preset natural claro: equilibrio entre timbre, claridad y expresion.",
@@ -1110,7 +1074,6 @@
     els.playbackSpeed.addEventListener("input", updatePlaybackSpeed);
     els.resultAudio.addEventListener("play", updatePlaybackSpeed);
     updatePlaybackSpeed();
-    updateTextStats();
 
     els.generateBtn.addEventListener("click", generateVoiceClone);
   </script>
