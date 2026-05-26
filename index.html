@@ -333,7 +333,7 @@
 <body>
   <main>
     <header>
-      <h1>Clona tu voz, Proyecto desarrollado por Juan Nicolas</h1>
+      <h1>Clona tu voz con XTTS v2 para practicar ingles</h1>
       <p class="lead">
         Sube o graba una muestra corta de tu voz, escribe una frase en ingles y genera audio con un Space Gradio basado en Coqui XTTS v2.
       </p>
@@ -449,6 +449,23 @@
     let recorder = null;
     let recordedChunks = [];
 
+    const XTTS_QUALITY = {
+      // Temperature: 0.65-0.75 suele dar entonacion humana clara sin inventar palabras.
+      inputSampleRate: 24000,
+      outputSampleRate: 24000,
+      temperature: 0.70,
+      // Mantener el ritmo nativo en 1.0 evita que el modelo ya nazca acelerado o comprimido.
+      lengthPenalty: 1.0,
+      speedRatio: 1.0,
+      // Repetition/top-k/top-p controlan estabilidad y naturalidad. Baja topP si inventa palabras.
+      repetitionPenalty: 5.0,
+      topK: 50,
+      topP: 0.85,
+      // Si conectas un endpoint que exponga "style/reference weight", usa este valor como guia maxima.
+      referenceAudioWeight: 1.0,
+      sentenceSplit: true
+    };
+
     function setStatus(message, type = "idle") {
       els.status.className = `status ${type}`;
       els.statusText.textContent = message;
@@ -550,15 +567,15 @@
       return new Blob([buffer], { type: "audio/wav" });
     }
 
-    function resampleAudioBuffer(audioBuffer, targetSampleRate) {
-      if (audioBuffer.sampleRate === targetSampleRate) {
+    function resampleAudioBuffer(audioBuffer, targetSampleRate, targetChannels = audioBuffer.numberOfChannels) {
+      if (audioBuffer.sampleRate === targetSampleRate && audioBuffer.numberOfChannels === targetChannels) {
         return audioBuffer;
       }
 
       const duration = audioBuffer.duration;
       const frameCount = Math.ceil(duration * targetSampleRate);
       const offlineContext = new OfflineAudioContext(
-        audioBuffer.numberOfChannels,
+        targetChannels,
         frameCount,
         targetSampleRate
       );
@@ -572,14 +589,14 @@
     async function normalizeGeneratedAudioToWav24k(blob) {
       try {
         const decoded = await decodeAudio(blob);
-        const alreadyHighQualityWav = blob.type.includes("wav") && decoded.sampleRate === 24000;
+        const alreadyHighQualityWav = blob.type.includes("wav") && decoded.sampleRate === XTTS_QUALITY.outputSampleRate;
 
         if (alreadyHighQualityWav) {
           return blob;
         }
 
         setStatus("Normalizando salida a WAV 24 kHz...", "loading");
-        const resampled = await resampleAudioBuffer(decoded, 24000);
+        const resampled = await resampleAudioBuffer(decoded, XTTS_QUALITY.outputSampleRate);
         return audioBufferToWav(resampled);
       } catch (error) {
         console.warn("No se pudo normalizar a WAV 24 kHz, usando audio original.", error);
@@ -587,16 +604,33 @@
       }
     }
 
-    async function ensureWavIfRecorded(blob, name) {
-      const ext = getFileExtension(blob, name);
-      if (ext === ".wav" || ext === ".mp3") {
-        return { blob, name };
-      }
+    async function prepareReferenceAudioForXtts(blob) {
+      try {
+        setStatus("Limpiando y normalizando la voz de referencia a WAV 24 kHz...", "loading");
+        const decoded = await decodeAudio(blob);
+        const mono24k = await resampleAudioBuffer(decoded, XTTS_QUALITY.inputSampleRate, 1);
+        const samples = mono24k.getChannelData(0);
+        let peak = 0;
 
-      setStatus("Convirtiendo la grabacion a WAV para XTTS...", "loading");
-      const audioBuffer = await decodeAudio(blob);
-      const wavBlob = audioBufferToWav(audioBuffer);
-      return { blob: wavBlob, name: "referencia.wav" };
+        for (let i = 0; i < samples.length; i += 1) {
+          const cleaned = Math.abs(samples[i]) < 0.001 ? 0 : samples[i];
+          samples[i] = cleaned;
+          peak = Math.max(peak, Math.abs(cleaned));
+        }
+
+        if (peak > 0) {
+          const gain = Math.min(0.92 / peak, 2.8);
+          for (let i = 0; i < samples.length; i += 1) {
+            samples[i] *= gain;
+          }
+        }
+
+        return { blob: audioBufferToWav(mono24k), name: "referencia-xtts-24khz.wav" };
+      } catch (error) {
+        console.warn("No se pudo normalizar la referencia, se usara el archivo original.", error);
+        const ext = getFileExtension(blob, "referencia.wav");
+        return { blob, name: `referencia${ext}` };
+      }
     }
 
     async function uploadAudioToGradio(spaceId, blob, name, token) {
@@ -637,33 +671,49 @@
       const xttsStudioLanguage = "English";
 
       if (mode === "xtts-basic") {
-        return [text, audioRefOrUrl, outputLanguage];
+        return [
+          text,
+          audioRefOrUrl,
+          outputLanguage,
+          XTTS_QUALITY.temperature,
+          XTTS_QUALITY.lengthPenalty,
+          XTTS_QUALITY.speedRatio
+        ];
       }
 
       if (mode === "coqui-classic") {
-        return [text, outputLanguage, audioRefOrUrl, null, false, true];
+        return [
+          text,
+          outputLanguage,
+          audioRefOrUrl,
+          null,
+          false,
+          true,
+          XTTS_QUALITY.temperature,
+          XTTS_QUALITY.lengthPenalty
+        ];
       }
 
       return [
-        text,
-        audioRefOrUrl,
-        null,
-        xttsStudioLanguage,
-        0.75,
-        1.0,
-        true,
-        5.0,
-        1.0,
-        30,
-        50,
-        0.85,
-        true,
-        -45,
-        300,
-        100,
+        text,                       // Texto en ingles a sintetizar.
+        audioRefOrUrl,              // URL temporal del audio de referencia subido a Gradio.
+        null,                       // Entrada de microfono del Space; usamos archivo, por eso va null.
+        xttsStudioLanguage,         // Este Space espera la etiqueta "English"; otros endpoints usan "en".
+        XTTS_QUALITY.temperature,   // 0.65-0.75 suele sonar mas natural sin inventar palabras.
+        XTTS_QUALITY.lengthPenalty, // 1.0 evita alargar o comprimir el render inicial del modelo.
+        true,                       // Limpieza/normalizacion interna de voz cuando el Space la expone.
+        XTTS_QUALITY.repetitionPenalty,
+        XTTS_QUALITY.speedRatio,    // 1.0: el modelo renderiza limpio; el slider ajusta despues.
+        30,                         // Max text tokens per sentence; ayuda a claridad en frases largas.
+        XTTS_QUALITY.topK,
+        XTTS_QUALITY.topP,
+        XTTS_QUALITY.sentenceSplit,
+        -45,                        // Umbral de silencio VAD: reduce cola y ruido de baja energia.
+        300,                        // Duracion minima de silencio para segmentar.
+        100,                        // Padding de silencio para evitar cortes duros.
         "Native XTTS splitting",
-        250,
-        true
+        250,                        // Pausa entre segmentos para articulacion clara.
+        true                        // Mantener normalizacion final activada en el Space.
       ];
     }
 
@@ -756,7 +806,7 @@
         setBusy(true);
         setStatus("Preparando audio de referencia...", "loading");
 
-        const prepared = await ensureWavIfRecorded(selectedAudioBlob, selectedAudioName);
+        const prepared = await prepareReferenceAudioForXtts(selectedAudioBlob);
         const clientOptions = token ? { token } : undefined;
 
         setStatus("Conectando con el Space XTTS v2...", "loading");
